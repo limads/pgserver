@@ -133,7 +133,7 @@ fn build_c_wrapper(path : &Path) -> Result<String, String> {
     }
 
     let mut c_wrapper = String::new();
-    c_wrapper += &format!("#include \"postgres.h\"\n#include \"fmgr.h\"\n\nPG_MODULE_MAGIC;\n'");
+    c_wrapper += &format!("#include \"postgres.h\"\n#include \"fmgr.h\"\n\nPG_MODULE_MAGIC;\n\n");
     for f in fn_names {
         c_wrapper += &format!("PG_FUNCTION_INFO_V1({});", f);
     }
@@ -142,29 +142,27 @@ fn build_c_wrapper(path : &Path) -> Result<String, String> {
 
 fn write_extension_meta(target_dir : &Path, sql_path : &Path, ext_info : &ExtensionInfo) -> Result<(), String> {
     /// Copies SQL definition into target/release/postgres/${extname}-${extversion}.sql
-    let sql_file_name = format!("{}-{}.sql", ext_info.name, ext_info.version);
+    let sql_file_name = format!("{}--{}.sql", ext_info.name, ext_info.version);
     let mut sql_out_path = target_dir.to_path_buf();
     sql_out_path.push(sql_file_name);
-    //let mut sql_target = fs::OpenOptions::new()
-    //    .truncate(true)
-    //    .create(true)
-    //    .open(sql_out_path)
-    //    .map_err(|e| format!("{}", e))?;
     fs::copy(sql_path, sql_out_path).map_err(|e| format!("{}", e))?;
 
     /// Write control definitino into target/release/postgres/${extname}.control
     let mut control_path = target_dir.to_path_buf();
     control_path.push(format!("{}.control", ext_info.name));
     let mut info = String::new();
-    info += &format!("default_version={}", ext_info.version);
-    info += &format!("comment={}", ext_info.description);
-    info += &format!("relocatable=true");
+    info += &format!("# {} extension\n", ext_info.name);
+    info += &format!("comment = '{}'\n", ext_info.description);
+    info += &format!("default_version = '{}'\n", ext_info.version);
+    info += &format!("module_pathname = '$libdir/{}'\n", ext_info.name);
+    info += &format!("relocatable=true\n");
     let mut control_target = fs::OpenOptions::new()
         .truncate(true)
         .create(true)
+        .write(true)
         .open(control_path)
-        .map_err(|e| format!("{}", e))?;
-    control_target.write_all(info.as_bytes()).map_err(|e| format!("{}", e))?;
+        .map_err(|e| format!("Error opening control file target: {}", e))?;
+    control_target.write_all(info.as_bytes()).map_err(|e| format!("Error writing to control file: {}", e))?;
     Ok(())
 }
 
@@ -174,12 +172,13 @@ fn pg_dir(flag : &str) -> Result<String, String> {
         .output()
         .map(|out| {
             if out.status.success() {
-                Some(String::from_utf8(out.stdout).unwrap())
+                Some(String::from_utf8(out.stdout).unwrap().trim().to_string())
             } else {
                 None
             }
-        }).map_err(|e| format!("{}", e) )?;
+        }).map_err(|e| format!("Error running pg_config for flag {}: {}", flag, e) )?;
     let dir = opt_dir.ok_or(format!("Could not determine PostgreSQL {}", flag))?;
+    println!("Found Postgres directory: {} = {}", flag, dir);
     Ok(dir)
 }
 
@@ -200,15 +199,16 @@ fn compile_object(
     let mut o_flags : Vec<&str> = Vec::new();
     o_flags.extend(["-c", &src_flag[..], "-fPIC", "-o", &obj_out_flag[..]].iter());
     o_flags.extend([&pg_include[..], &link_search[..], &link_crate[..]].iter());
-    println!("{:?}", o_flags);
+    println!("gcc flags (compile .o): {:?}", o_flags);
+    println!("gcc call: {:?}", Command::new("gcc").args(&o_flags[..]));
     let compile_obj_out = Command::new("gcc")
         .args(&o_flags[..])
         .output()
-        .map_err(|e| format!("{}", e))?;
+        .map_err(|e| format!("Error invoking gcc to compile .o file: {}", e))?;
     if compile_obj_out.status.success() {
         Ok(obj_out_flag)
     } else {
-        Err(String::from_utf8(compile_obj_out.stderr).unwrap())
+        Err(format!("gcc compilation error: {}", String::from_utf8(compile_obj_out.stderr).unwrap()))
     }
 }
 
@@ -221,24 +221,27 @@ fn compile_so(
     let mut so_out = target_dir.to_path_buf();
     so_out.push(format!("lib{}.so", ext_info.name));
     let so_out_flag = format!("{}", so_out.display());
-    let whole_a = "-Wl,--whole-archive ";
-    let static_target = format!("target/release/{}.a", ext_info.name);
+    let whole_a = "-Wl,--whole-archive";
+    let static_target = format!("target/release/lib{}.a", ext_info.name);
     let no_whole_a = "-Wl,--no-whole-archive";
     let mut so_flags = Vec::new();
     so_flags.extend([&obj_out_flag[..], "-shared", "-o", &so_out_flag[..]].iter());
     so_flags.extend([whole_a, &static_target[..], no_whole_a].iter());
-    println!("{:?}", so_flags);
+    println!("gcc flags (compile .so): {:?}", so_flags);
+    println!("gcc call: {:?}", Command::new("gcc").args(&so_flags[..]));
     if let Some(extra) = extra_flags.as_ref() {
-        so_flags.push(&extra[..]);
+        for flag in extra.split(' ') {
+            so_flags.push(&flag[..]);
+        }
     }
     let compile_so_out = Command::new("gcc")
         .args(&so_flags[..])
         .output()
-        .map_err(|e| format!("{}", e))?;
+        .map_err(|e| format!("Error inkovking gcc to compile .so file: {}", e))?;
     if compile_so_out.status.success() {
         Ok(())
     } else {
-        Err(String::from_utf8(compile_so_out.stderr).unwrap())
+        Err(format!("gcc compilation error: {}", String::from_utf8(compile_so_out.stderr).unwrap()))
     }
 }
 
@@ -250,12 +253,13 @@ fn compile_extension(
     let mut src_path = target_dir.to_path_buf();
     src_path.push(format!("{}.c", ext_info.name));
     let mut sql_path = target_dir.to_path_buf();
-    sql_path.push(format!("{}-{}.sql", ext_info.name, ext_info.version));
+    sql_path.push(format!("{}--{}.sql", ext_info.name, ext_info.version));
     let mut src_file = fs::OpenOptions::new()
         .truncate(true)
         .create(true)
+        .write(true)
         .open(&src_path)
-        .map_err(|e| format!("{}", e))?;
+        .map_err(|e| format!("Unable to open src SQL file: {}", e))?;
     let c_wrapper = build_c_wrapper(&sql_path)?;
     src_file.write_all(c_wrapper.as_bytes()).map_err(|e| format!("{}", e))?;
     let obj_name = compile_object(&target_dir, &src_path, &ext_info)?;
@@ -265,10 +269,10 @@ fn compile_extension(
 
 fn deploy_extension(target_dir : &Path, ext_info : &ExtensionInfo) -> Result<(), String> {
     let pkg_lib_dir = pg_dir("--includedir-server")?;
-    let share_dir = pg_dir("--sharedir")?;
+    let share_dir = format!("{}/extension", pg_dir("--sharedir")?);
 
     let so_name = format!("lib{}.so", ext_info.name);
-    let sql_name = format!("{}-{}.sql", ext_info.name, ext_info.version);
+    let sql_name = format!("{}--{}.sql", ext_info.name, ext_info.version);
     let control_name = format!("{}.control", ext_info.name);
     let mut src_so = target_dir.to_path_buf();
     src_so.push(so_name.clone());
@@ -287,9 +291,12 @@ fn deploy_extension(target_dir : &Path, ext_info : &ExtensionInfo) -> Result<(),
     dst_control.push(share_dir);
     dst_control.push(control_name);
 
-    fs::copy(src_so, dst_so).map_err(|e| format!("{}", e))?;
-    fs::copy(src_sql, dst_sql).map_err(|e| format!("{}", e))?;
-    fs::copy(src_control, dst_control).map_err(|e| format!("{}", e))?;
+    fs::copy(&src_so, &dst_so).map_err(|e| format!("Unable to copy .so file: {}", e))?;
+    println!("{:?} copied into {:?}", src_so, dst_so);
+    fs::copy(&src_sql, &dst_sql).map_err(|e| format!("Unable to copy .sql file: {}", e))?;
+    println!("{:?} copied into {:?}", src_sql, dst_sql);
+    fs::copy(&src_control, &dst_control).map_err(|e| format!("Unable to copy .contorl file: {}", e))?;
+    println!("{:?} copied into {:?}", src_control, dst_control);
     Ok(())
 }
 
@@ -297,12 +304,14 @@ fn main() -> Result<(), String> {
     let pg_install = PgInstall::from_args();
     let crate_path = pg_install.path.clone()
         .unwrap_or_else(|| { let mut buf = PathBuf::new(); buf.push("."); buf });
-    let mut entries = crate_path.read_dir()
-        .map_err(|e| format!("{}", e) )?
-        .filter_map(|e| e.ok() );
-    if let Some(sql) = entries.find(|e| e.path().to_str() == Some("sql") ) {
+    let mut entries : Vec<_> = crate_path.read_dir()
+        .map_err(|e| format!("Unable to read crate directory entries: {}", e) )?
+        .filter_map(|e| e.ok() )
+        .collect();
+    println!("{:?}", entries);
+    if let Some(sql) = entries.iter().find(|e| e.path().file_name().and_then(|f| f.to_str()) == Some("sql") ) {
         let sql_entries : Vec<_> = sql.path().read_dir()
-            .map_err(|e| format!("{}", e))?
+            .map_err(|e| format!("Unable to view content of sql directory: {}", e))?
             .filter_map(|e| e.ok() )
             .filter(|p| p.path().extension() == Some(&OsStr::new("sql")))
             .collect();
@@ -317,11 +326,15 @@ fn main() -> Result<(), String> {
                 target_dir.push("release");
                 target_dir.push("postgres");
                 if !target_dir.exists() {
-                    fs::create_dir(&target_dir).map_err(|e| format!("{}", e))?;
+                    fs::create_dir(&target_dir)
+                        .map_err(|e| format!("Unable to create target extenion directory: {}", e))?;
                 }
                 write_extension_meta(&target_dir, &sql_entries[0].path(), &ext_info)?;
                 compile_extension(&target_dir, &ext_info, pg_install.extra.clone())?;
                 deploy_extension(&target_dir, &ext_info)?;
+                println!("Execute \"CREATE EXTENSION {};\" in your database to access the extension.",
+                    ext_info.name
+                );
                 Ok(())
             },
             _ => Err(format!("Multiple SQL script files at [crate]/sql folder"))
