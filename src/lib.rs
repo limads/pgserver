@@ -87,14 +87,14 @@ extern "C" {
 
 /// PostgreSQL raw byte array (bytea). Allows the user to write functions which
 /// take &Bytea as arguments (mapping to a bytea field at the SQL definition).
-pub type Bytea = varlena;
+pub struct Bytea(varlena);
 
 impl Bytea {
 
     pub fn palloc(sz : usize) -> Self {
         unsafe {
             let vl_ptr : *const varlena = palloc_varlena(sz);
-            (&*vl_ptr).clone()
+            Bytea((&*vl_ptr).clone())
         }
     }
 
@@ -143,7 +143,7 @@ impl convert::TryInto<Text> for Bytea {
 
     fn try_into(self) -> Result<Text, ()> {
         if self.as_str().is_some() {
-            Ok(Text(self))
+            Ok(Text(self.0))
         } else {
             Err(())
         }
@@ -187,14 +187,14 @@ fn utf8_to_str_mut<'a>(bytes : *mut varlena) -> &'a mut str {
 impl AsRef<[u8]> for Bytea {
 
     fn as_ref(&self) -> &[u8] {
-        bytes_to_slice(self as *const _)
+        bytes_to_slice(&self.0 as *const _)
     }
 }
 
 impl AsMut<[u8]> for Bytea {
 
     fn as_mut(&mut self) -> &mut [u8] {
-        bytes_to_slice_mut(self as *mut _)
+        bytes_to_slice_mut(&mut self.0 as *mut _)
     }
 }
 
@@ -225,7 +225,7 @@ impl From<Vec<u8>> for Bytea {
     fn from(v : Vec<u8>) -> Self {
         unsafe {
             let vl_ptr : *const varlena = copy_bytes_to_pg(v);
-            (&*vl_ptr).clone()
+            Self((&*vl_ptr).clone())
         }
     }
 }
