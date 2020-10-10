@@ -91,7 +91,7 @@ pub type Bytea = varlena;
 
 impl Bytea {
 
-    pub fn new(sz : usize) -> Self {
+    pub fn palloc(sz : usize) -> Self {
         unsafe {
             let vl_ptr : *const varlena = palloc_varlena(sz);
             (&*vl_ptr).clone()
@@ -107,10 +107,11 @@ impl Bytea {
     }
 
     /// Converts this into a raw pointer, forgetting to clear it (delivering it to PostgreSQL
-    /// for later cleanup)
-    pub fn deliver(&self) -> *const Bytea {
-        mem::forget(self);
-        self as *const _
+    /// for later cleanup). PostgreSQL is expected to manage both the handler (the forgotten
+    /// strucut) and the data pointed into.
+    pub fn release(self) -> *const Bytea {
+        mem::forget(&self);
+        &self as *const _
     }
 
 }
@@ -127,6 +128,14 @@ impl Bytea {
 /// data is valid UTF-8. Implements AsRef<[str]> (while bytea does not). The VarChar type
 /// and BpChar type are aliases to this structure.
 pub struct Text(varlena);
+
+impl Text {
+
+    pub fn release(self) -> *const Text {
+        mem::forget(&self);
+        &self as *const _
+    }
+}
 
 impl convert::TryInto<Text> for Bytea {
 
