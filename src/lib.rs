@@ -1,5 +1,6 @@
 #![feature(vec_into_raw_parts)]
 #![feature(c_variadic)]
+#![feature(never_type)]
 
 use std::slice;
 use std::os::raw::c_char;
@@ -9,74 +10,16 @@ use std::mem;
 use std::ffi::CString;
 use std::ptr;
 
+/// Enumeration that wraps PostgreSQL logging via raise
 pub mod log;
 
-// split into error submodule
-// -- Bindgen-generated code to reproduce a small subset of the PG types here.
+/// Bindgen-generated code to represent variable-length arrays allocated by Postgres.
+mod vla;
 
-#[repr(C)]
-#[derive(Default)]
-struct __IncompleteArrayField<T>(::std::marker::PhantomData<T>, [T; 0]);
-impl<T> __IncompleteArrayField<T> {
-    #[inline]
-    pub const fn new() -> Self {
-        __IncompleteArrayField(::std::marker::PhantomData, [])
-    }
-    #[inline]
-    pub unsafe fn as_ptr(&self) -> *const T {
-        ::std::mem::transmute(self)
-    }
-    #[inline]
-    pub unsafe fn as_mut_ptr(&mut self) -> *mut T {
-        ::std::mem::transmute(self)
-    }
-    #[inline]
-    pub unsafe fn as_slice(&self, len: usize) -> &[T] {
-        ::std::slice::from_raw_parts(self.as_ptr(), len)
-    }
-    #[inline]
-    pub unsafe fn as_mut_slice(&mut self, len: usize) -> &mut [T] {
-        ::std::slice::from_raw_parts_mut(self.as_mut_ptr(), len)
-    }
-}
-impl<T> ::std::fmt::Debug for __IncompleteArrayField<T> {
-    fn fmt(&self, fmt: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        fmt.write_str("__IncompleteArrayField")
-    }
-}
-impl<T> ::std::clone::Clone for __IncompleteArrayField<T> {
-    #[inline]
-    fn clone(&self) -> Self {
-        Self::new()
-    }
-}
+use vla::varlena;
 
-#[repr(C)]
-struct __BindgenUnionField<T>(::std::marker::PhantomData<T>);
-impl<T> __BindgenUnionField<T> {
-    #[inline]
-    pub const fn new() -> Self {
-        __BindgenUnionField(::std::marker::PhantomData)
-    }
-    #[inline]
-    pub unsafe fn as_ref(&self) -> &T {
-        ::std::mem::transmute(self)
-    }
-    #[inline]
-    pub unsafe fn as_mut(&mut self) -> &mut T {
-        ::std::mem::transmute(self)
-    }
-}
-
-#[repr(C)]
-#[derive(Debug, Clone)]
-struct varlena {
-    vl_len_: [::std::os::raw::c_char; 4usize],
-    vl_dat: __IncompleteArrayField<::std::os::raw::c_char>,
-}
-
-// Available at link time from the pg_helper.c module.
-// #[link(name = "pghelper", kind="static")]
+// Available at link time from the pg_helper.c module (which in turn relies on C calls which
+// will be available only at runtime at the server).
 extern "C" {
 
     fn read_from_pg(arg : *const varlena) -> ByteSlice;
@@ -92,10 +35,6 @@ extern "C" {
     fn report(kind : i32, msg : *const c_char);
 
 }
-
-// pub fn err_report() {
-//    unsafe{ report(); }
-// }
 
 /// PostgreSQL raw byte array (bytea). Allows the user to write functions which
 /// take Bytea as arguments (mapping to a bytea field at the SQL definition).
@@ -144,14 +83,6 @@ impl Bytea {
     }
 
 }
-
-/*impl Write for Bytea {
-
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let s = self.as_mut();
-        io::Error::new()
-    }
-}*/
 
 /// PostgreSQL text type. Just wraps a bytea, but adds the guarantee that the underlying
 /// data is valid UTF-8. Implements AsRef<[str]> (while bytea does not). The VarChar type

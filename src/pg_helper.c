@@ -32,11 +32,7 @@ size_t bytes_len(struct varlena* t) {
   return VARSIZE(t) - VARHDRSZ;
 }
 
-// elevel = -1
-// ereport(ERROR(20)|WARNING(19)|NOTICE(18), ERRCODE_INTERNAL_ERROR|ERRCODE_WARNING|ERRCODE_SUCCESSFUL_COMPLETION)
-
 void report(int kind, char* msg) {
   ereport(kind, (errmsg(msg)));
 }
-
 
