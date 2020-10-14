@@ -1,10 +1,15 @@
 #![feature(vec_into_raw_parts)]
+#![feature(c_variadic)]
 
 use std::slice;
 use std::os::raw::c_char;
 use std::fmt;
 use std::convert::{self, TryInto};
 use std::mem;
+use std::ffi::CString;
+use std::ptr;
+
+pub mod log;
 
 // split into error submodule
 // -- Bindgen-generated code to reproduce a small subset of the PG types here.
@@ -84,12 +89,19 @@ extern "C" {
 
     fn bytes_len(t : *const varlena) -> usize;
 
+    fn report(kind : i32, msg : *const c_char);
+
 }
+
+// pub fn err_report() {
+//    unsafe{ report(); }
+// }
 
 /// PostgreSQL raw byte array (bytea). Allows the user to write functions which
 /// take Bytea as arguments (mapping to a bytea field at the SQL definition).
 /// This structure just wraps a palloc-allocated pointer, so returning it from
 /// functions is the same as returning *const varlena.
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct Bytea(*const varlena);
 
@@ -148,6 +160,7 @@ impl Bytea {
 /// To acquire a text, allocate a generic buffer via let b = Bytea::palloc(n), then write a valid UTF-8 to the buffer
 /// via b.as_mut().copy_from_slice(&str.as_bytes()); Then wrap the result from the fallible conversion via
 /// let txt = b.try_into().unwrap();
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct Text(*const varlena);
 
