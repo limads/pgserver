@@ -11,14 +11,15 @@ ByteSlice read_from_pg(struct varlena* arg) {
 }
 
 struct varlena* palloc_varlena(size_t sz) {
-  return (struct varlena *) palloc(VARHDRSZ + sz);
+  struct varlena* data = (struct varlena *) palloc(VARHDRSZ + sz);
+  SET_VARSIZE(data, VARHDRSZ + sz);
+  return data;
 }
 
 // Here is how to deliver struct varlena data to PostgreSQL. char* is not necessarily
 // nul-terminated.
 struct varlena* copy_to_pg(ByteSlice s) {
   struct varlena *dst = palloc_varlena(s.len);
-  SET_VARSIZE(dst, VARHDRSZ + s.len);
   memcpy((void*) VARDATA(dst), (void*) s.data, s.len);
   return dst;
 }
@@ -28,6 +29,6 @@ char* bytes_ptr(struct varlena* t) {
 }
 
 size_t bytes_len(struct varlena* t) {
-  return VARSIZE(t);
+  return VARSIZE(t) - VARHDRSZ;
 }
 

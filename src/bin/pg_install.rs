@@ -135,7 +135,7 @@ fn build_c_wrapper(path : &Path) -> Result<String, String> {
     let mut c_wrapper = String::new();
     c_wrapper += &format!("#include \"postgres.h\"\n#include \"fmgr.h\"\n\nPG_MODULE_MAGIC;\n\n");
     for f in fn_names {
-        c_wrapper += &format!("PG_FUNCTION_INFO_V1({});", f);
+        c_wrapper += &format!("PG_FUNCTION_INFO_V1({});\n\n", f);
     }
     Ok(c_wrapper)
 }
@@ -162,7 +162,8 @@ fn write_extension_meta(target_dir : &Path, sql_path : &Path, ext_info : &Extens
         .write(true)
         .open(control_path)
         .map_err(|e| format!("Error opening control file target: {}", e))?;
-    control_target.write_all(info.as_bytes()).map_err(|e| format!("Error writing to control file: {}", e))?;
+    control_target.write_all(info.as_bytes())
+        .map_err(|e| format!("Error writing to control file: {}", e))?;
     Ok(())
 }
 
@@ -268,8 +269,8 @@ fn compile_extension(
 }
 
 fn deploy_extension(target_dir : &Path, ext_info : &ExtensionInfo) -> Result<(), String> {
-    let pkg_lib_dir = pg_dir("--includedir-server")?;
-    let share_dir = format!("{}/extension", pg_dir("--sharedir")?);
+    let pkg_lib_dir = pg_dir("--pkglibdir")?;
+    let share_dir = format!("{}/extension", pg_dir("--sharedir")?); //pkglibdir sharedir/extension libdir ??
 
     let so_name = format!("lib{}.so", ext_info.name);
     let sql_name = format!("{}--{}.sql", ext_info.name, ext_info.version);

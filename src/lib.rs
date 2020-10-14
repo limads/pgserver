@@ -6,6 +6,7 @@ use std::fmt;
 use std::convert::{self, TryInto};
 use std::mem;
 
+// split into error submodule
 // -- Bindgen-generated code to reproduce a small subset of the PG types here.
 
 #[repr(C)]
@@ -86,32 +87,48 @@ extern "C" {
 }
 
 /// PostgreSQL raw byte array (bytea). Allows the user to write functions which
-/// take &Bytea as arguments (mapping to a bytea field at the SQL definition).
-pub struct Bytea(varlena);
+/// take Bytea as arguments (mapping to a bytea field at the SQL definition).
+/// This structure just wraps a palloc-allocated pointer, so returning it from
+/// functions is the same as returning *const varlena.
+#[repr(C)]
+pub struct Bytea(*const varlena);
 
 impl Bytea {
 
+    /// Allocates a buffer without initializing its contents. You can copy
+    /// data into the buffer with:
+    ///
+    /// ```rust
+    /// let mut b = Bytea::palloc(5);
+    /// b.as_mut().copy_from_slice(&[0u8, 0u8, 0u8, 1u8, 1u8]);
+    /// ```
+    ///
+    /// Make sure the passed slice has the exact same size that was allocated,
+    /// at the penalty of Rust throwing a panic (if this panic is uncaught via
+    /// catch_unwind, the server might crash and cut the connection). Use Bytea::from
+    /// to allocate exactly the ammount of data you will need directly from a &[u8] or Vec<u8>.
     pub fn palloc(sz : usize) -> Self {
         unsafe {
             let vl_ptr : *const varlena = palloc_varlena(sz);
-            Bytea((&*vl_ptr).clone())
+            Bytea(vl_ptr)
         }
     }
 
+    /// Copies the content of data into a new buffer allocated via palloc
+    pub fn from(data : &[u8]) -> Self {
+        let mut b = Self::palloc(data.len());
+        b.as_mut().copy_from_slice(data);
+        b
+    }
+
+    /// Returns a &str from the buffer iff it represents valid UTF8
     pub fn as_str(&self) -> Option<&str> {
         std::str::from_utf8(self.as_ref()).ok()
     }
 
+    /// Returns a &mut str from the buffer iff it represents valid UTF8
     pub fn as_str_mut(&mut self) -> Option<&mut str> {
         std::str::from_utf8_mut(self.as_mut()).ok()
-    }
-
-    /// Converts this into a raw pointer, forgetting to clear it (delivering it to PostgreSQL
-    /// for later cleanup). PostgreSQL is expected to manage both the handler (the forgotten
-    /// strucut) and the data pointed into.
-    pub fn release(self) -> *const Bytea {
-        mem::forget(&self);
-        &self as *const _
     }
 
 }
@@ -126,15 +143,23 @@ impl Bytea {
 
 /// PostgreSQL text type. Just wraps a bytea, but adds the guarantee that the underlying
 /// data is valid UTF-8. Implements AsRef<[str]> (while bytea does not). The VarChar type
-/// and BpChar type are aliases to this structure.
-pub struct Text(varlena);
+/// and BpChar type are aliases to this structure. Text, unlike Bytea, cannot be allocated directly
+/// via palloc, because we have to guarantee the data handed by Postgre is a buffer erased to UTF-8.
+/// To acquire a text, allocate a generic buffer via let b = Bytea::palloc(n), then write a valid UTF-8 to the buffer
+/// via b.as_mut().copy_from_slice(&str.as_bytes()); Then wrap the result from the fallible conversion via
+/// let txt = b.try_into().unwrap();
+#[repr(C)]
+pub struct Text(*const varlena);
 
 impl Text {
 
-    pub fn release(self) -> *const Text {
-        mem::forget(&self);
-        &self as *const _
+    /// Allocates a buffer and copies the slice contents into it.
+    pub fn from(content : &str) -> Self {
+        let mut txt_bytes = Bytea::palloc(content.as_bytes().len());
+        txt_bytes.as_mut().copy_from_slice(content.as_bytes());
+        txt_bytes.try_into().unwrap()
     }
+
 }
 
 impl convert::TryInto<Text> for Bytea {
@@ -187,28 +212,28 @@ fn utf8_to_str_mut<'a>(bytes : *mut varlena) -> &'a mut str {
 impl AsRef<[u8]> for Bytea {
 
     fn as_ref(&self) -> &[u8] {
-        bytes_to_slice(&self.0 as *const _)
+        bytes_to_slice(self.0 as *const _)
     }
 }
 
 impl AsMut<[u8]> for Bytea {
 
     fn as_mut(&mut self) -> &mut [u8] {
-        bytes_to_slice_mut(&mut self.0 as *mut _)
+        bytes_to_slice_mut(self.0 as *mut _)
     }
 }
 
 impl AsRef<str> for Text {
 
     fn as_ref(&self) -> &str {
-        utf8_to_str(&self.0 as *const _)
+        utf8_to_str(self.0 as *const _)
     }
 }
 
 impl AsMut<str> for Text {
 
     fn as_mut(&mut self) -> &mut str {
-        utf8_to_str_mut(&mut self.0 as *mut _)
+        utf8_to_str_mut(self.0 as *mut _)
     }
 }
 
@@ -225,7 +250,7 @@ impl From<Vec<u8>> for Bytea {
     fn from(v : Vec<u8>) -> Self {
         unsafe {
             let vl_ptr : *const varlena = copy_bytes_to_pg(v);
-            Self((&*vl_ptr).clone())
+            Self(vl_ptr)
         }
     }
 }
@@ -248,5 +273,9 @@ fn copy_bytes_to_pg(data_vec : Vec<u8>) -> *const varlena {
     }
 }
 
-
-
+#[test]
+fn test() {
+    let txt = "Hello";
+    //let bytes = Bytea::palloc(txt.as_bytes().len());
+    println!("{:?}", txt.as_bytes().len());
+}
