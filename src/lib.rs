@@ -13,6 +13,9 @@ use std::ptr;
 /// Enumeration that wraps PostgreSQL logging via raise
 pub mod log;
 
+/// Utilities to build PostgreSQL extensions
+pub mod build;
+
 /// Bindgen-generated code to represent variable-length arrays allocated by Postgres.
 mod vla;
 
@@ -116,6 +119,12 @@ impl convert::TryInto<Text> for Bytea {
         } else {
             Err(())
         }
+    }
+}
+
+impl fmt::Display for Text {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_ref())
     }
 }
 
@@ -223,3 +232,50 @@ fn test() {
     //let bytes = Bytea::palloc(txt.as_bytes().len());
     println!("{:?}", txt.as_bytes().len());
 }
+
+/* Move this to a test sub-crate
+
+create function return_text() returns text as
+    '$libdir/libbayes.so', 'return_text'
+language c strict;
+
+create function alloc_text() returns text as
+    '$libdir/libbayes.so', 'alloc_text'
+language c strict;
+
+create function text_len() returns integer as
+    '$libdir/libbayes.so', 'text_len'
+language c strict;
+
+create function raise_err() returns integer as
+    '$libdir/libbayes.so', 'raise_err'
+language c strict;
+
+#[no_mangle]
+pub extern "C" fn alloc_text() -> Text {
+    let hello = "hello";
+    let mut txt_bytes = Bytea::palloc(hello.as_bytes().len());
+    txt_bytes.as_mut().copy_from_slice(hello.as_bytes());
+    txt_bytes.try_into().unwrap()
+}
+
+#[no_mangle]
+pub extern "C" fn return_text() -> Text {
+    let hello = "hello";
+    let mut txt_bytes = Bytea::palloc(hello.as_bytes().len());
+    txt_bytes.as_mut().copy_from_slice(hello.as_bytes());
+    txt_bytes.try_into().unwrap()
+}
+
+#[no_mangle]
+pub extern "C" fn text_len() -> i32 {
+    let hello = "hello";
+    let mut txt_bytes = Bytea::palloc(hello.as_bytes().len());
+    txt_bytes.as_mut().len() as i32
+}
+
+#[no_mangle]
+pub extern "C" fn raise_err() -> i32 {
+    log::Error::raise("Some random error")
+}
+*/

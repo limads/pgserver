@@ -1,5 +1,5 @@
 [package]
-name = "pgdatum"
+name = "pgserver"
 version = "0.1.0"
 authors = ["Diego Lima <lima.ds@outlook.com>"]
 edition = "2018"
